@@ -34,3 +34,35 @@ les **champs communs** à toutes les fiches (`sku`, `nom`, `prix`, `stock`, `cat
 leur type, mais **autorise tous les champs supplémentaires**. On garde la flexibilité du
 modèle document (un processeur et un clavier n'ont pas les mêmes attributs), sans accepter
 de fiches incomplètes ou mal typées (un prix négatif ou en texte, par exemple).
+
+## 3. Source des données et import
+
+**Source :** [pc-part-dataset](https://github.com/docyx/pc-part-dataset), jeu de données
+de composants récupérés sur PCPartPicker (mars 2024). Les fichiers JSON bruts sont
+versionnés dans `raw/` pour que le projet soit reproductible sans téléchargement.
+
+**Catégories retenues (11)**, couvrant les trois familles de l'énoncé :
+
+| Famille | Fichiers |
+|---|---|
+| Composants | `cpu`, `motherboard`, `memory`, `video-card`, `case`, `power-supply` |
+| Périphériques | `keyboard`, `mouse`, `monitor`, `headphones` |
+| Logiciels | `os` |
+
+**Le schéma variable en pratique** : chaque fichier a ses propres attributs.
+
+| Catégorie | Attributs spécifiques |
+|---|---|
+| Processeur | `core_count`, `core_clock`, `boost_clock`, `microarchitecture`, `tdp`, `graphics` |
+| Clavier | `style`, `switches`, `backlit`, `tenkeyless`, `connection_type`, `color` |
+
+**Pipeline d'import en deux temps :**
+1. **Import brut** : chaque fichier est chargé tel quel dans une collection `raw_<categorie>`
+   (`mongoimport`).
+2. **Transformation** : un pipeline d'agrégation convertit les données brutes vers le modèle
+   `produits` (catégorie, marque, specs au format Attribute pattern…) et les écrit avec `$merge`.
+
+**Limites du dataset et enrichissement :**
+- pas de marque : elle est extraite du nom du produit ;
+- prix en dollars : convertis en euros avec un taux fixe (hypothèse documentée) ;
+- pas de stock, de SKU ni d'avis : générés lors de la transformation.
