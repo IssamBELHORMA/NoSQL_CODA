@@ -78,3 +78,16 @@ SELECT date_commande, total, lignes FROM commandes_par_client WHERE user_id = 'U
 ```
 
 Aucune requête n'utilise `ALLOW FILTERING` : chaque requête connaît sa partition key.
+
+## 6. Compromis
+
+| Compromis | Conséquence acceptée |
+|---|---|
+| **Dénormalisation** : une vue est écrite 3 fois (journal + 2 compteurs) | Plus d'écritures, mais des écritures peu coûteuses dans Cassandra ; chaque lecture est directe |
+| **Pas de tri sur les compteurs** | Le top de la semaine est calculé côté application (ou par un batch Spark en production) |
+| **Compteurs** non idempotents | Si une écriture est rejouée après un timeout, une vue peut être comptée deux fois : acceptable pour des statistiques |
+| **Cohérence à terme** (AP) | Un compteur peut être légèrement en retard sur un autre nœud ; aucun impact pour de l'analytics |
+| **Requêtes figées** | Une nouvelle question métier demande une nouvelle table (prix de la modélisation query-driven) |
+
+**Lien avec les autres lots :** le panier Redis (Lot 2) devient une commande dans Cassandra à la
+validation ; les commandes alimentent ensuite les recommandations « achetés ensemble » (Lot 4).
