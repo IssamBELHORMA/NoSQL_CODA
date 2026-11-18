@@ -66,3 +66,72 @@ versionnés dans `raw/` pour que le projet soit reproductible sans téléchargem
 - pas de marque : elle est extraite du nom du produit ;
 - prix en dollars : convertis en euros avec un taux fixe (hypothèse documentée) ;
 - pas de stock, de SKU ni d'avis : générés lors de la transformation.
+
+
+## 4. Modèle du document produit
+
+Les données brutes sont transformées par un pipeline d'agrégation (`data.mongodb.js`),
+puis écrites dans `produits` avec `$merge`. Le validateur `$jsonSchema` s'applique aussi
+à ces écritures.
+
+### Correspondance données brutes → modèle
+
+| Champ `produits` | Origine | Traitement |
+|---|---|---|
+| `sku` | généré | préfixe de catégorie + fin de l'identifiant brut (`CPU-0A1B2C3D4E`) |
+| `nom` | `name` | repris tel quel |
+| `slug` | `name` | minuscules, espaces → tirets (URL de la fiche) |
+| `prix` | `price` | converti en euros (taux fixe 0,92, hypothèse) ; produits sans prix exclus |
+| `stock` | généré | entier aléatoire entre 0 et 199 |
+| `categorie` | fichier source | `{ nom, chemin }`, ex. `Composants > Processeurs` |
+| `marque` | `name` | premier mot du nom (ou deux mots pour « Fractal Design », « be quiet! »…) |
+| `specs` | tous les autres champs | convertis en paires `{ k, v }`, valeurs `null` supprimées |
+| `source` | — | traçabilité vers la collection et le document brut |
+
+### Patterns appliqués
+
+1. **Polymorphic pattern** : une seule collection `produits` pour toutes les catégories.
+   Les champs communs sont identiques partout ; ce qui varie est regroupé dans `specs`.
+2. **Attribute pattern** : les attributs spécifiques sont stockés sous forme de paires
+   `{ k, v }`. Ils sont générés automatiquement avec `$objectToArray` : une nouvelle
+   catégorie ou un nouvel attribut ne demande **aucune modification du code ni du schéma**.
+   Un seul index `{ "specs.k": 1, "specs.v": 1 }` suffit pour filtrer sur n'importe quel
+   attribut de n'importe quelle catégorie.
+3. **Extended reference** : `marque: { _id, nom }`. Le nom est embarqué pour l'affichage
+   sans jointure ; la collection `marques` (générée à partir des produits) garde le
+   référentiel complet.
+4. **Schema versioning** : `schema_version: 1` permet de faire évoluer le modèle et de
+   migrer les fiches progressivement, sans interruption de service.
+
+### Exemple de document
+
+```json
+{
+  "_id": ObjectId("..."),
+  "sku": "CPU-0A1B2C3D4E",
+  "nom": "AMD Ryzen 7 9800X3D",
+  "slug": "amd-ryzen-7-9800x3d-0a1b2c3d4e",
+  "prix": 415.38,
+  "devise": "EUR",
+  "stock": 87,
+  "schema_version": 1,
+  "categorie": { "nom": "Processeurs", "chemin": ["Composants", "Processeurs"] },
+  "marque": { "_id": "M_AMD", "nom": "AMD" },
+  "specs": [
+    { "k": "core_count", "v": 8 },
+    { "k": "core_clock", "v": 4.7 },
+    { "k": "boost_clock", "v": 5.2 },
+    { "k": "microarchitecture", "v": "Zen 5" },
+    { "k": "tdp", "v": 120 },
+    { "k": "graphics", "v": "Radeon" }
+  ],
+  "stats_avis": { "nb": 0, "somme": 0, "moyenne": null },
+  "avis_recents": [],
+  "compatibles": [],
+  "source": { "dataset": "pc-part-dataset", "raw_collection": "raw_cpu", "raw_id": ObjectId("...") }
+}
+```
+
+**Résultat de la transformation :** 51 837 documents bruts → **11 012 produits** (les fiches
+sans prix, soit environ 80 % du dataset, sont exclues) et **252 marques** extraites
+automatiquement.
