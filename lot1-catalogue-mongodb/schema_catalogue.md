@@ -1,69 +1,43 @@
 # Lot 1 — Catalogue Produits (MongoDB)
 
-## 1. Choix technologique : MongoDB (base orientée document)
+## 1. Choix technologique : MongoDB (document)
 
-| Besoin LDLC | Réponse MongoDB |
+| Besoin LDLC | Pourquoi MongoDB |
 |---|---|
-| Schémas variables selon la catégorie (CPU, clavier, logiciel…) | Les documents d'une même collection n'ont pas besoin d'avoir les mêmes champs |
-| Évolution sans migration (nouveaux attributs, nouvelles catégories) | Pas de `ALTER TABLE` : on ajoute le champ dans les nouveaux documents |
-| Fiches lues très souvent, écrites rarement | Une fiche complète = **1 seul document** → 1 lecture, aucune jointure |
-| Sous-documents (specs, avis, produits compatibles) | Documents imbriqués et tableaux natifs |
-| 27 000 références, millions de visites | Index secondaires, réplication (replica set), sharding possible |
+| Schémas différents selon la catégorie | Les documents d'une même collection n'ont pas besoin des mêmes champs |
+| Évolution sans migration | Pas de `ALTER TABLE` : un nouveau champ s'ajoute simplement aux documents |
+| Fiches lues très souvent | Une fiche = 1 document = 1 lecture, sans jointure |
+| Sous-documents (specs, avis, compatibilités) | Documents imbriqués et tableaux natifs |
 
-**Pourquoi pas un SGBDR ?** Il faudrait soit une table avec des centaines de colonnes vides,
-soit un modèle EAV (Entité-Attribut-Valeur) coûteux en jointures, et une migration à chaque
-nouvelle catégorie de produits.
+Un SGBDR imposerait des centaines de colonnes vides ou un modèle EAV coûteux en jointures.
 
-**Positionnement CAP :** MongoDB en replica set est **CP** : par défaut, les écritures et
-les lectures passent par le nœud primaire. Pour un catalogue, afficher un prix faux est
-plus grave qu'une courte indisponibilité en écriture. Les lectures peuvent être déportées
-sur les secondaires (`readPreference: secondaryPreferred`) pour absorber les pics de
-trafic (sorties de composants), en acceptant un léger retard de réplication.
+**CAP : CP.** En replica set, lectures et écritures passent par le primaire : un prix faux est
+plus grave qu'une courte indisponibilité. Pendant les pics de trafic, les lectures peuvent
+être déportées sur les secondaires.
 
-## 2. Collections et validation
+## 2. Données et scripts
 
-| Collection | Volume | Rôle |
-|---|---|---|
-| `produits` | plusieurs dizaines de milliers (27 000 chez LDLC) | Fiches produits, document principal lu par le site |
-| `marques` | plusieurs centaines (600 chez LDLC) | Référentiel des marques, extrait automatiquement des fiches |
-| `avis` | plusieurs centaines de milliers | Historique complet des avis clients |
-| `raw_<categorie>` | 1 par fichier source | Données brutes importées, avant transformation |
+**Source :** [pc-part-dataset](https://github.com/docyx/pc-part-dataset) (données PCPartPicker,
+mars 2024), 11 catégories couvrant composants, périphériques et logiciels. Les fichiers bruts
+sont versionnés dans `raw/`.
 
-**Validation souple :** la collection `produits` utilise un validateur `$jsonSchema` qui impose
-les **champs communs** à toutes les fiches (`sku`, `nom`, `prix`, `stock`, `categorie`) avec
-leur type, mais **autorise tous les champs supplémentaires**. On garde la flexibilité du
-modèle document (un processeur et un clavier n'ont pas les mêmes attributs), sans accepter
-de fiches incomplètes ou mal typées (un prix négatif ou en texte, par exemple).
-
-## 3. Source des données et import
-
-**Source :** [pc-part-dataset](https://github.com/docyx/pc-part-dataset), jeu de données
-de composants récupérés sur PCPartPicker (mars 2024). Les fichiers JSON bruts sont
-versionnés dans `raw/` pour que le projet soit reproductible sans téléchargement.
-
-**Catégories retenues (11)**, couvrant les trois familles de l'énoncé :
-
-| Famille | Fichiers |
+| Script | Rôle |
 |---|---|
-| Composants | `cpu`, `motherboard`, `memory`, `video-card`, `case`, `power-supply` |
-| Périphériques | `keyboard`, `mouse`, `monitor`, `headphones` |
-| Logiciels | `os` |
+| `import_raw.py` | Charge les fichiers JSON bruts dans des collections `raw_<categorie>` |
+| `data.py` | Construit la base : validation, transformation vers `produits`, marques, avis de test, index |
+| `requetes.py` | Requêtes types du site (R1 à R11) |
 
-**Le schéma variable en pratique** : chaque fichier a ses propres attributs.
 
-| Catégorie | Attributs spécifiques |
-|---|---|
-| Processeur | `core_count`, `core_clock`, `boost_clock`, `microarchitecture`, `tdp`, `graphics` |
-| Clavier | `style`, `switches`, `backlit`, `tenkeyless`, `connection_type`, `color` |
+**Étapes de `data.py` :**
+1. Supprime `produits`, `marques` et `avis` (relançable ; les collections `raw_*` sont conservées).
+2. Crée `produits` avec le validateur `$jsonSchema`.
+3. Transforme chaque catégorie brute (filtre des produits sans prix, marque, prix en euros,
+   SKU, stock, `specs`) et l'écrit dans `produits` avec `$merge`.
+4. Génère le référentiel `marques` à partir des produits (`$out`).
+5. Génère les avis de test, puis met à jour les fiches (5 derniers avis, moyenne).
+6. Crée les index.
+7. Affiche un bilan et vérifie avec `explain()` que les requêtes utilisent les index.
 
-**Pipeline d'import en deux temps :**
-1. **Import brut** (`import_raw.py`) : chaque fichier est chargé tel quel dans une collection
-   `raw_<categorie>` avec `pymongo` (`insert_many`).
-2. **Transformation** (`data.py`) : un pipeline d'agrégation convertit les données brutes vers
-   le modèle `produits` (catégorie, marque, specs au format Attribute pattern…) et les écrit
-   avec `$merge`.
-
-**Exécution** (depuis la racine du dépôt, conteneurs lancés avec `docker compose up -d`) :
 ```bash
 pip install -r requirements.txt
 python lot1-catalogue-mongodb/import_raw.py
@@ -71,168 +45,84 @@ python lot1-catalogue-mongodb/data.py
 python lot1-catalogue-mongodb/requetes.py
 ```
 
-**Limites du dataset et enrichissement :**
-- pas de marque : elle est extraite du nom du produit ;
-- prix en dollars : convertis en euros avec un taux fixe (hypothèse documentée) ;
-- pas de stock, de SKU ni d'avis : générés lors de la transformation.
+**Résultat :** 51 837 documents bruts → **11 012 produits** (fiches sans prix exclues),
+**252 marques**, environ **24 000 avis**.
 
+**Enrichissements** (absents du dataset) : marque extraite du nom, prix convertis en euros
+(taux fixe 0,92), stock, SKU et avis générés (marqués `genere: true`).
 
-## 4. Modèle du document produit
+## 3. Modèle de données
 
-Les données brutes sont transformées par un pipeline d'agrégation (`data.py`),
-puis écrites dans `produits` avec `$merge`. Le validateur `$jsonSchema` s'applique aussi
-à ces écritures.
+| Collection | Rôle |
+|---|---|
+| `produits` | Fiches produits, toutes catégories confondues |
+| `marques` | Référentiel des marques, généré à partir des produits |
+| `avis` | Historique complet des avis |
 
-### Correspondance données brutes → modèle
-
-| Champ `produits` | Origine | Traitement |
-|---|---|---|
-| `sku` | généré | préfixe de catégorie + fin de l'identifiant brut (`CPU-0A1B2C3D4E`) |
-| `nom` | `name` | repris tel quel |
-| `slug` | `name` | minuscules, espaces → tirets (URL de la fiche) |
-| `prix` | `price` | converti en euros (taux fixe 0,92, hypothèse) ; produits sans prix exclus |
-| `stock` | généré | entier aléatoire entre 0 et 199 |
-| `categorie` | fichier source | `{ nom, chemin }`, ex. `Composants > Processeurs` |
-| `marque` | `name` | premier mot du nom (ou deux mots pour « Fractal Design », « be quiet! »…) |
-| `specs` | tous les autres champs | convertis en paires `{ k, v }`, valeurs `null` supprimées |
-| `source` | — | traçabilité vers la collection et le document brut |
-
-### Patterns appliqués
-
-1. **Polymorphic pattern** : une seule collection `produits` pour toutes les catégories.
-   Les champs communs sont identiques partout ; ce qui varie est regroupé dans `specs`.
-2. **Attribute pattern** : les attributs spécifiques sont stockés sous forme de paires
-   `{ k, v }`. Ils sont générés automatiquement avec `$objectToArray` : une nouvelle
-   catégorie ou un nouvel attribut ne demande **aucune modification du code ni du schéma**.
-   Un seul index `{ "specs.k": 1, "specs.v": 1 }` suffit pour filtrer sur n'importe quel
-   attribut de n'importe quelle catégorie.
-3. **Extended reference** : `marque: { _id, nom }`. Le nom est embarqué pour l'affichage
-   sans jointure ; la collection `marques` (générée à partir des produits) garde le
-   référentiel complet.
-4. **Schema versioning** : `schema_version: 1` permet de faire évoluer le modèle et de
-   migrer les fiches progressivement, sans interruption de service.
-
-### Exemple de document
-
+**Exemple de produit :**
 ```json
 {
-  "_id": ObjectId("..."),
-  "sku": "CPU-0A1B2C3D4E",
-  "nom": "AMD Ryzen 7 9800X3D",
-  "slug": "amd-ryzen-7-9800x3d-0a1b2c3d4e",
-  "prix": 415.38,
-  "devise": "EUR",
-  "stock": 87,
+  "sku": "CPU-25B6C03A79",
+  "nom": "AMD Ryzen 7 7800X3D",
+  "prix": 312.85,
+  "stock": 105,
   "schema_version": 1,
   "categorie": { "nom": "Processeurs", "chemin": ["Composants", "Processeurs"] },
   "marque": { "_id": "M_AMD", "nom": "AMD" },
   "specs": [
     { "k": "core_count", "v": 8 },
-    { "k": "core_clock", "v": 4.7 },
-    { "k": "boost_clock", "v": 5.2 },
-    { "k": "microarchitecture", "v": "Zen 5" },
-    { "k": "tdp", "v": 120 },
-    { "k": "graphics", "v": "Radeon" }
+    { "k": "microarchitecture", "v": "Zen 4" },
+    { "k": "tdp", "v": 120 }
   ],
-  "stats_avis": { "nb": 0, "somme": 0, "moyenne": null },
-  "avis_recents": [],
-  "compatibles": [],
-  "source": { "dataset": "pc-part-dataset", "raw_collection": "raw_cpu", "raw_id": ObjectId("...") }
+  "stats_avis": { "nb": 12, "somme": 47, "moyenne": 3.92 },
+  "avis_recents": [ { "client": "client_47214", "note": 5, "titre": "Parfait" } ],
+  "compatibles": []
 }
 ```
 
-**Résultat de la transformation :** 51 837 documents bruts → **11 012 produits** (les fiches
-sans prix, soit environ 80 % du dataset, sont exclues) et **252 marques** extraites
-automatiquement.
+## 4. Choix de modélisation
 
-## 5. Avis clients : Subset pattern et Computed pattern
+| Choix | Justification |
+|---|---|
+| **Une seule collection `produits`** (Polymorphic pattern) | Champs communs partout, champs spécifiques regroupés dans `specs` |
+| **`specs: [{k, v}]`** (Attribute pattern) | Un seul index pour filtrer sur n'importe quel attribut de n'importe quelle catégorie ; une nouvelle catégorie ne demande aucune modification |
+| **Marque copiée dans le produit** (Extended reference) | Affichage et filtre par marque sans jointure ; le détail reste dans `marques` |
+| **5 derniers avis dans la fiche** (Subset pattern) | Fiche affichée en une lecture, sans faire grossir le document sans limite (plafond de 16 Mo) |
+| **Historique des avis dans `avis`** (References) | Croissance illimitée, page « tous les avis » paginée |
+| **Moyenne pré-calculée** (Computed pattern) | Note affichée et triable sans relire tous les avis |
+| **Validation `$jsonSchema` souple** | Champs communs obligatoires et typés, champs spécifiques libres |
+| **`schema_version`** (Schema versioning) | Faire évoluer le modèle et migrer les fiches progressivement |
 
-Les avis posent un dilemme **Embedded vs References** :
-- les embarquer tous dans la fiche rend l'affichage immédiat, mais le document grossit
-  sans limite (plafond de 16 Mo par document) et chaque nouvel avis réécrit la fiche
-  la plus lue du site ;
-- les mettre uniquement dans une collection séparée oblige à une seconde requête
-  à chaque affichage de fiche.
+**Compromis accepté :** quelques données dupliquées (nom de marque, résumé des avis) et une
+double écriture à chaque avis, en échange de lectures rapides. C'est adapté à un catalogue
+lu beaucoup plus souvent qu'il n'est modifié.
 
-**Solution hybride :**
+## 5. Index
 
-| Où | Quoi | Pattern |
+| Index | Requête servie |
+|---|---|
+| `sku` unique, `slug` unique | Accès direct à une fiche |
+| `categorie.chemin + prix` | Liste d'une catégorie triée par prix |
+| `specs.k + specs.v` | Filtres techniques |
+| `marque.nom + prix` | Filtre par marque et budget |
+| texte sur `nom` | Barre de recherche |
+| `avis : produit_id + date` | Avis d'un produit, plus récents d'abord |
+
+**Vérification avec `explain()` :** toutes les requêtes utilisent un index (`IXSCAN` ou
+`TEXT_MATCH`), sans aucun `COLLSCAN`. Exemple : lister 20 processeurs examine 20 documents
+au lieu de 11 012.
+
+## 6. Requêtes types (`requetes.py`)
+
+| # | Usage | Ce qu'elle montre |
 |---|---|---|
-| Collection `avis` | l'historique **complet** des avis (1 document par avis) | References (`produit_id`) |
-| `produits.avis_recents` | les **5 derniers** avis, résumés | **Subset pattern** |
-| `produits.stats_avis` | `{ nb, somme, moyenne }` | **Computed pattern** |
-
-- La fiche produit s'affiche en **une seule lecture** : note moyenne, nombre d'avis et
-  5 derniers avis.
-- La page « tous les avis » interroge la collection `avis`, paginée (`skip` / `limit`).
-- La moyenne n'est pas recalculée à chaque affichage : `somme` et `nb` sont mis à jour à
-  chaque nouvel avis, et `moyenne = somme / nb`.
-
-**Exemple de document `avis` :**
-```json
-{
-  "_id": ObjectId("..."),
-  "produit_id": ObjectId("..."),
-  "sku": "CPU-25B6C03A79",
-  "client": "client_04521",
-  "note": 5,
-  "titre": "Excellent produit",
-  "texte": "Conforme à la description, je recommande.",
-  "date": ISODate("2026-03-14T10:22:00Z"),
-  "genere": true
-}
-```
-
-**Données de test :** le dataset source ne contient pas d'avis. Ils sont **générés**
-aléatoirement (pseudos `client_XXXXX`, champ `genere: true`) pour 3 000 produits,
-avec 1 à 15 avis chacun et une répartition des notes réaliste (majorité de 4 et 5).
-
-
-## 6. Index
-
-Le catalogue est **lu beaucoup plus souvent qu'il n'est écrit** : on accepte le coût des index
-à l'écriture (chaque insertion met à jour les index) en échange de lectures rapides.
-Chaque index correspond à une requête du site.
-
-| Collection | Index | Requête servie |
-|---|---|---|
-| `produits` | `{ sku: 1 }` unique | accès direct à une fiche ; clé du `$merge` d'import |
-| `produits` | `{ slug: 1 }` unique | page produit (`/produit/amd-ryzen-7-7800x3d-...`) |
-| `produits` | `{ "categorie.chemin": 1, prix: 1 }` | liste d'une catégorie triée par prix |
-| `produits` | `{ "specs.k": 1, "specs.v": 1 }` | filtres techniques (socket, mémoire, microarchitecture…) |
-| `produits` | `{ "marque.nom": 1, prix: 1 }` | filtre par marque trié par prix |
-| `produits` | texte sur `nom` | barre de recherche |
-| `avis` | `{ produit_id: 1, date: -1 }` | page « tous les avis » d'un produit, plus récents d'abord |
-
-**Points notables :**
-- **Index multikey** : `categorie.chemin` et `specs` sont des tableaux. MongoDB indexe chaque
-  élément : un produit `["Composants", "Processeurs"]` est trouvé en cherchant
-  `"Composants"` **ou** `"Processeurs"`.
-- **Attribute pattern** : grâce aux paires `{ k, v }`, **un seul index** couvre tous les
-  attributs de toutes les catégories. Sans ce pattern, il faudrait un index par attribut
-  (`core_count`, `socket`, `switches`…), soit des dizaines d'index.
-- **Ordre des champs** dans un index composé : le champ filtré par égalité d'abord
-  (`categorie.chemin`), puis le champ de tri (`prix`). L'index sert alors au filtre **et** au tri.
-- **Index texte** en `default_language: "none"` : les noms de produits sont des références
-  techniques en anglais (« Ryzen 7 7800X3D »), qu'il ne faut pas réduire à leur racine.
-
-**Vérification :** `explain()` (exécuté à la fin de `data.py`) confirme que chaque requête utilise un index
-(`IXSCAN` ou `TEXT_MATCH`) au lieu de parcourir toute la collection (`COLLSCAN`).
-
-## 7. Requêtes types
-
-Les requêtes sont dans `requetes.py` (à exécuter après `data.py`).
-
-| # | Usage sur le site | Opérations | Index / pattern utilisé |
-|---|---|---|---|
-| R1 | Afficher une fiche produit | `find_one` par `slug` | index `slug` ; fiche complète en **1 lecture** (embedded) |
-| R2 | Lister une catégorie, page 2, triée par prix | `find` + `sort` + `skip` / `limit` | index `categorie.chemin + prix` |
-| R3 | Filtres techniques (CPU 8 cœurs Zen 4, clavier sans fil RGB) | `$all` + `$elemMatch` sur `specs` | **Attribute pattern** : un seul index pour toutes les catégories |
-| R4 | Barre de recherche | `$text` + tri par pertinence | index texte |
-| R5 | Filtre marque + budget | `find` sur `marque.nom` et `prix` | index `marque.nom + prix` ; **extended reference** |
-| R6 | Ajouter un attribut / une catégorie | `update_one` / `insert_one` | **schéma flexible** : aucune migration |
-| R7 | Publier un avis | `insert_one` + `update_one` (`$inc`, `$push` + `$slice`) | **Subset** + **Computed** pattern |
-| R8 | Page « tous les avis » | `find` paginé sur `avis` | index `produit_id + date` ; **references** |
-| R9 | Statistiques par catégorie | `aggregate` (`$group`) | — |
-| R10 | Marques les mieux notées | `aggregate` sur `stats_avis` | **Computed pattern** (pas de recalcul sur `avis`) |
-| R11 | Fiche + marque détaillée + 3 derniers avis complets | `aggregate` + `$lookup` | jointure ponctuelle, hors chemin critique |
+| R1 | Fiche produit | Fiche complète en une lecture |
+| R2 | Catégorie paginée, triée par prix | Index composé + `skip` / `limit` |
+| R3 | Filtres techniques (CPU Zen 4, clavier sans fil RGB) | Attribute pattern : même index pour deux catégories |
+| R4 | Recherche texte | Tri par pertinence |
+| R5 | Marque + budget | Extended reference |
+| R6 | Nouvel attribut, nouvelle catégorie | Aucune migration |
+| R7 | Publier un avis | Subset + Computed pattern |
+| R8 | Tous les avis d'un produit | References paginées |
+| R9, R10 | Statistiques par catégorie, marques les mieux notées | Agrégations |
+| R11 | Fiche + marque + avis complets | `$lookup`, pour les besoins ponctuels |
