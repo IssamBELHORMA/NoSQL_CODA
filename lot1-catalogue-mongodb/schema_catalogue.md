@@ -135,3 +135,45 @@ puis écrites dans `produits` avec `$merge`. Le validateur `$jsonSchema` s'appli
 **Résultat de la transformation :** 51 837 documents bruts → **11 012 produits** (les fiches
 sans prix, soit environ 80 % du dataset, sont exclues) et **252 marques** extraites
 automatiquement.
+
+## 5. Avis clients : Subset pattern et Computed pattern
+
+Les avis posent un dilemme **Embedded vs References** :
+- les embarquer tous dans la fiche rend l'affichage immédiat, mais le document grossit
+  sans limite (plafond de 16 Mo par document) et chaque nouvel avis réécrit la fiche
+  la plus lue du site ;
+- les mettre uniquement dans une collection séparée oblige à une seconde requête
+  à chaque affichage de fiche.
+
+**Solution hybride :**
+
+| Où | Quoi | Pattern |
+|---|---|---|
+| Collection `avis` | l'historique **complet** des avis (1 document par avis) | References (`produit_id`) |
+| `produits.avis_recents` | les **5 derniers** avis, résumés | **Subset pattern** |
+| `produits.stats_avis` | `{ nb, somme, moyenne }` | **Computed pattern** |
+
+- La fiche produit s'affiche en **une seule lecture** : note moyenne, nombre d'avis et
+  5 derniers avis.
+- La page « tous les avis » interroge la collection `avis`, paginée (`skip` / `limit`).
+- La moyenne n'est pas recalculée à chaque affichage : `somme` et `nb` sont mis à jour à
+  chaque nouvel avis, et `moyenne = somme / nb`.
+
+**Exemple de document `avis` :**
+```json
+{
+  "_id": ObjectId("..."),
+  "produit_id": ObjectId("..."),
+  "sku": "CPU-25B6C03A79",
+  "client": "client_04521",
+  "note": 5,
+  "titre": "Excellent produit",
+  "texte": "Conforme à la description, je recommande.",
+  "date": ISODate("2026-03-14T10:22:00Z"),
+  "genere": true
+}
+```
+
+**Données de test :** le dataset source ne contient pas d'avis. Ils sont **générés**
+aléatoirement (pseudos `client_XXXXX`, champ `genere: true`) pour 3 000 produits,
+avec 1 à 15 avis chacun et une répartition des notes réaliste (majorité de 4 et 5).

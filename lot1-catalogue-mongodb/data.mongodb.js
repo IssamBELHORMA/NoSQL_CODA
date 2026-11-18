@@ -140,14 +140,80 @@ db.produits.aggregate([
   { $out: "marques" }
 ]);
 
+// Avis clients (données de test générées)
+const NB_PRODUITS_AVEC_AVIS = 3000;
+const NOTES = [5, 5, 5, 5, 4, 4, 4, 3, 3, 2, 1];   // répartition réaliste
+const TITRES = {
+  5: ["Excellent produit", "Parfait", "Je recommande"],
+  4: ["Très bon produit", "Bon rapport qualité/prix", "Satisfait"],
+  3: ["Correct", "Moyen", "Peut mieux faire"],
+  2: ["Décevant", "Qualité moyenne"],
+  1: ["À éviter", "Très déçu"]
+};
+const TEXTES = {
+  5: ["Conforme à la description, je recommande.", "Rien à redire, livraison rapide."],
+  4: ["Très bien dans l'ensemble, quelques petits défauts.", "Bon produit pour le prix."],
+  3: ["Fait le travail, sans plus.", "Correct mais j'attendais mieux."],
+  2: ["Plusieurs problèmes après quelques semaines.", "Finitions décevantes."],
+  1: ["Produit défectueux, retourné.", "Ne correspond pas à la description."]
+};
+const DEUX_ANS_MS = 2 * 365 * 24 * 3600 * 1000;
+const hasard = tableau => tableau[Math.floor(Math.random() * tableau.length)];
+
+// 1. Générer les avis pour un échantillon de produits
+const cibles = db.produits.aggregate([
+  { $sample: { size: NB_PRODUITS_AVEC_AVIS } },
+  { $project: { _id: 1, sku: 1 } }
+]).toArray();
+
+let lot = [];
+cibles.forEach(p => {
+  const nbAvis = 1 + Math.floor(Math.random() * 15);
+  for (let i = 0; i < nbAvis; i++) {
+    const note = hasard(NOTES);
+    lot.push({
+      produit_id: p._id,
+      sku: p.sku,
+      client: "client_" + String(Math.floor(Math.random() * 100000)).padStart(5, "0"),
+      note: note,
+      titre: hasard(TITRES[note]),
+      texte: hasard(TEXTES[note]),
+      date: new Date(Date.now() - Math.random() * DEUX_ANS_MS),
+      genere: true
+    });
+  }
+  if (lot.length >= 1000) { db.avis.insertMany(lot); lot = []; }   // insertion par lots
+});
+if (lot.length > 0) db.avis.insertMany(lot);
+
+// 2. Subset pattern + Computed pattern : mettre à jour les fiches produits
+db.avis.aggregate([
+  { $sort: { produit_id: 1, date: -1 } },
+  { $group: {
+      _id: "$produit_id",
+      nb: { $sum: 1 },
+      somme: { $sum: "$note" },
+      recents: { $firstN: { n: 5, input: { client: "$client", note: "$note", titre: "$titre", date: "$date" } } }
+  } },
+  { $project: {
+      stats_avis: { nb: "$nb", somme: "$somme", moyenne: { $round: [{ $divide: ["$somme", "$nb"] }, 2] } },
+      avis_recents: "$recents"
+  } },
+  { $merge: { into: "produits", on: "_id", whenMatched: "merge", whenNotMatched: "discard" } }
+]);
+
 // Vérification
 ({
   produits: db.produits.countDocuments(),
   marques: db.marques.countDocuments(),
-  par_categorie: db.produits.aggregate([
-    { $group: { _id: "$categorie.nom", nb: { $sum: 1 } } },
-    { $sort: { nb: -1 } }
+  avis: db.avis.countDocuments(),
+  produits_avec_avis: db.produits.countDocuments({ "stats_avis.nb": { $gt: 0 } }),
+  repartition_notes: db.avis.aggregate([
+    { $group: { _id: "$note", nb: { $sum: 1 } } },
+    { $sort: { _id: -1 } }
   ]).toArray(),
-  top_marques: db.marques.find({}, { nom: 1, nb_produits: 1 }).limit(5).toArray(),
-  exemple: db.produits.findOne({ "categorie.nom": "Processeurs" })
+  exemple: db.produits.findOne(
+    { "stats_avis.nb": { $gte: 6 } },
+    { _id: 0, nom: 1, stats_avis: 1, avis_recents: 1 }
+  )
 });
