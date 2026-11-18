@@ -36,35 +36,113 @@ requêtes types. Chaque lot a un script `requetes.py` qui exécute ces requêtes
 
 ## Lancer le projet
 
+### 0. Prérequis
+
+- **Docker** et **Docker Compose** (Docker Desktop sur Mac / Windows)
+- **Python 3.10+**
+- Ports libres : `27017` (MongoDB), `6379` (Redis), `9042` (Cassandra), `7474` et `7687` (Neo4j)
+- Environ 3 Go de RAM disponibles pour les 4 conteneurs
+
+### 1. Récupérer le dépôt
+
 ```bash
-docker compose up -d
-python -m venv venv && source venv/bin/activate
-pip install -r requirements.txt
-
-# Lot 1 — catalogue
-python lot1-catalogue-mongodb/import_raw.py
-python lot1-catalogue-mongodb/data.py
-python lot1-catalogue-mongodb/requetes.py
-
-# Lot 2 — sessions et panier
-python lot2-panier-redis/sessions.py
-python lot2-panier-redis/panier.py
-
-# Lot 3 — logs et commandes
-python lot3-logs-cassandra/client_cassandra.py
-python lot3-logs-cassandra/generer_logs.py
-python lot3-logs-cassandra/commandes.py
-python lot3-logs-cassandra/requetes.py
-
-# Lot 4 — recommandations
-python lot4-reco-neo4j/import_graphe.py
-python lot4-reco-neo4j/compatibilites.py
-python lot4-reco-neo4j/achats.py
-python lot4-reco-neo4j/requetes.py
+git clone https://github.com/IssamBELHORMA/NoSQL_CODA.git
+cd NoSQL_CODA
 ```
 
-Les scripts s'enchaînent : le Lot 2 lit les prix dans MongoDB, le Lot 3 enregistre les commandes
-avec les SKU du catalogue, le Lot 4 se construit à partir de MongoDB et de Cassandra.
+### 2. Démarrer les 4 bases
+
+```bash
+docker compose up -d
+docker compose ps        # les 4 conteneurs ldlc-* doivent être "Up"
+```
+
+Cassandra met **environ 1 minute** à démarrer. Avant le Lot 3, vérifier qu'elle répond :
+
+```bash
+docker exec ldlc-cassandra cqlsh -e "DESCRIBE KEYSPACES"
+```
+
+### 3. Installer les dépendances Python
+
+```bash
+python -m venv venv
+source venv/bin/activate          # Windows : venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+Toutes les commandes suivantes se lancent **depuis la racine du dépôt**, avec le venv activé.
+
+### 4. Lot 1 — Catalogue (MongoDB)
+
+```bash
+python lot1-catalogue-mongodb/import_raw.py   # JSON bruts -> collections raw_* (51 837 documents)
+python lot1-catalogue-mongodb/data.py         # produits, marques, avis, index (11 012 produits)
+python lot1-catalogue-mongodb/requetes.py     # requêtes types R1 à R11
+```
+
+### 5. Lot 2 — Sessions et panier (Redis)
+
+```bash
+python lot2-panier-redis/client_redis.py      # test de connexion et mesure de latence
+python lot2-panier-redis/sessions.py          # session partagée entre serveurs, TTL glissant
+python lot2-panier-redis/panier.py            # panier, fusion à la connexion, prix lus dans MongoDB
+```
+
+`sessions.py` et `panier.py` attendent quelques secondes pour montrer l'expiration automatique.
+
+### 6. Lot 3 — Logs et analytics (Cassandra)
+
+```bash
+python lot3-logs-cassandra/client_cassandra.py   # crée le keyspace ldlc_logs et les 4 tables
+python lot3-logs-cassandra/generer_logs.py       # 50 000 événements sur 7 jours (~20 s)
+python lot3-logs-cassandra/commandes.py          # 3 000 commandes de test + historique de U1024
+python lot3-logs-cassandra/requetes.py           # top semaine, vues du jour, recherches, historique
+```
+
+Le Lot 1 doit avoir été lancé avant : les événements et commandes utilisent les SKU du catalogue.
+
+### 7. Lot 4 — Recommandations (Neo4j)
+
+```bash
+python lot4-reco-neo4j/import_graphe.py     # produits, marques, catégories depuis MongoDB
+python lot4-reco-neo4j/compatibilites.py    # sockets et formats (processeur, carte mère, boîtier)
+python lot4-reco-neo4j/achats.py            # clients et achats croisés depuis Cassandra
+python lot4-reco-neo4j/requetes.py          # requêtes de recommandation R1 à R6
+```
+
+Les lots 1 et 3 doivent avoir été lancés avant. Le graphe est consultable dans le navigateur :
+<http://localhost:7474> (utilisateur `neo4j`, mot de passe `password123`), par exemple avec
+`MATCH (p:Produit {nom: 'AMD Ryzen 7 7800X3D'})-[r]-(x) RETURN p, r, x LIMIT 50`.
+
+### 8. Consulter les bases directement (optionnel)
+
+```bash
+docker exec -it ldlc-mongo mongosh ldlc                 # MongoDB
+docker exec -it ldlc-redis redis-cli                    # Redis
+docker exec -it ldlc-cassandra cqlsh -k ldlc_logs       # Cassandra
+```
+
+### 9. Arrêter / repartir de zéro
+
+```bash
+docker compose down        # arrête les conteneurs (les données sont conservées)
+docker compose down -v     # arrête et supprime aussi les données
+```
+
+Les scripts des lots 1 et 4 repartent de zéro à chaque lancement. Ceux du Lot 3 **ajoutent**
+des données (les compteurs de vues s'additionnent) : pour un état propre, supprimer le keyspace
+(`docker exec ldlc-cassandra cqlsh -e "DROP KEYSPACE ldlc_logs"`) puis relancer l'étape 6.
+
+### Ordre des dépendances
+
+```
+Lot 1 (MongoDB) ──> Lot 2 (prix du panier)
+       │
+       ├──────────> Lot 3 (SKU des événements et des commandes)
+       │                    │
+       └──────────> Lot 4 <─┘ (produits depuis MongoDB, achats depuis Cassandra)
+```
 
 ## Exemple : le chemin de la donnée
 
