@@ -1,0 +1,15 @@
+# Lot 1 — Catalogue produits (MongoDB)
+pymongo
+
+# Lot 2 — Panier et sessions (Redis)
+redis
+
+# Lot 3 — Logs et analytics (Cassandra)
+cassandra-driver
+
+# Lot 4 — Recommandations (Neo4j)
+neo4j
+
+# Bonus — Prototype d'API
+fastapi
+uvicorn

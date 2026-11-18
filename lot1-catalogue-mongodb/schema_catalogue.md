@@ -57,10 +57,19 @@ versionnés dans `raw/` pour que le projet soit reproductible sans téléchargem
 | Clavier | `style`, `switches`, `backlit`, `tenkeyless`, `connection_type`, `color` |
 
 **Pipeline d'import en deux temps :**
-1. **Import brut** : chaque fichier est chargé tel quel dans une collection `raw_<categorie>`
-   (`mongoimport`).
-2. **Transformation** : un pipeline d'agrégation convertit les données brutes vers le modèle
-   `produits` (catégorie, marque, specs au format Attribute pattern…) et les écrit avec `$merge`.
+1. **Import brut** (`import_raw.py`) : chaque fichier est chargé tel quel dans une collection
+   `raw_<categorie>` avec `pymongo` (`insert_many`).
+2. **Transformation** (`data.py`) : un pipeline d'agrégation convertit les données brutes vers
+   le modèle `produits` (catégorie, marque, specs au format Attribute pattern…) et les écrit
+   avec `$merge`.
+
+**Exécution** (depuis la racine du dépôt, conteneurs lancés avec `docker compose up -d`) :
+```bash
+pip install -r requirements.txt
+python lot1-catalogue-mongodb/import_raw.py
+python lot1-catalogue-mongodb/data.py
+python lot1-catalogue-mongodb/requetes.py
+```
 
 **Limites du dataset et enrichissement :**
 - pas de marque : elle est extraite du nom du produit ;
@@ -70,7 +79,7 @@ versionnés dans `raw/` pour que le projet soit reproductible sans téléchargem
 
 ## 4. Modèle du document produit
 
-Les données brutes sont transformées par un pipeline d'agrégation (`data.mongodb.js`),
+Les données brutes sont transformées par un pipeline d'agrégation (`data.py`),
 puis écrites dans `produits` avec `$merge`. Le validateur `$jsonSchema` s'applique aussi
 à ces écritures.
 
@@ -207,22 +216,22 @@ Chaque index correspond à une requête du site.
 - **Index texte** en `default_language: "none"` : les noms de produits sont des références
   techniques en anglais (« Ryzen 7 7800X3D »), qu'il ne faut pas réduire à leur racine.
 
-**Vérification :** `explain("executionStats")` confirme que chaque requête utilise un index
+**Vérification :** `explain()` (exécuté à la fin de `data.py`) confirme que chaque requête utilise un index
 (`IXSCAN` ou `TEXT_MATCH`) au lieu de parcourir toute la collection (`COLLSCAN`).
 
 ## 7. Requêtes types
 
-Les requêtes sont dans `requetes.mongodb.js` (à exécuter après `data.mongodb.js`).
+Les requêtes sont dans `requetes.py` (à exécuter après `data.py`).
 
 | # | Usage sur le site | Opérations | Index / pattern utilisé |
 |---|---|---|---|
-| R1 | Afficher une fiche produit | `findOne` par `slug` | index `slug` ; fiche complète en **1 lecture** (embedded) |
+| R1 | Afficher une fiche produit | `find_one` par `slug` | index `slug` ; fiche complète en **1 lecture** (embedded) |
 | R2 | Lister une catégorie, page 2, triée par prix | `find` + `sort` + `skip` / `limit` | index `categorie.chemin + prix` |
 | R3 | Filtres techniques (CPU 8 cœurs Zen 4, clavier sans fil RGB) | `$all` + `$elemMatch` sur `specs` | **Attribute pattern** : un seul index pour toutes les catégories |
 | R4 | Barre de recherche | `$text` + tri par pertinence | index texte |
 | R5 | Filtre marque + budget | `find` sur `marque.nom` et `prix` | index `marque.nom + prix` ; **extended reference** |
-| R6 | Ajouter un attribut / une catégorie | `updateOne` / `insertOne` | **schéma flexible** : aucune migration |
-| R7 | Publier un avis | `insertOne` + `updateOne` (`$inc`, `$push` + `$slice`) | **Subset** + **Computed** pattern |
+| R6 | Ajouter un attribut / une catégorie | `update_one` / `insert_one` | **schéma flexible** : aucune migration |
+| R7 | Publier un avis | `insert_one` + `update_one` (`$inc`, `$push` + `$slice`) | **Subset** + **Computed** pattern |
 | R8 | Page « tous les avis » | `find` paginé sur `avis` | index `produit_id + date` ; **references** |
 | R9 | Statistiques par catégorie | `aggregate` (`$group`) | — |
 | R10 | Marques les mieux notées | `aggregate` sur `stats_avis` | **Computed pattern** (pas de recalcul sur `avis`) |
