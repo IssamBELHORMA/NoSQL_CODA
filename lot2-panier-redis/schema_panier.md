@@ -1,5 +1,17 @@
 ## 2. Sessions
 
+**Scripts :**
+
+| Script | Rôle |
+|---|---|
+| `client_redis.py` | Connexion partagée par les scripts ; lancé seul, il teste la connexion et mesure la latence |
+| `sessions.py` | Création, lecture (TTL glissant), suppression des sessions ; démonstration du partage entre serveurs et de l'expiration |
+
+```bash
+python lot2-panier-redis/client_redis.py
+python lot2-panier-redis/sessions.py
+```
+
 **Clé :** `session:{session_id}` (identifiant aléatoire UUID, stocké dans le cookie du navigateur)
 **Structure :** Hash
 **TTL :** 30 minutes, **glissant** (remis à 30 minutes à chaque requête de l'utilisateur)
