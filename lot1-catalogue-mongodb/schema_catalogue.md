@@ -209,3 +209,21 @@ Chaque index correspond à une requête du site.
 
 **Vérification :** `explain("executionStats")` confirme que chaque requête utilise un index
 (`IXSCAN` ou `TEXT_MATCH`) au lieu de parcourir toute la collection (`COLLSCAN`).
+
+## 7. Requêtes types
+
+Les requêtes sont dans `requetes.mongodb.js` (à exécuter après `data.mongodb.js`).
+
+| # | Usage sur le site | Opérations | Index / pattern utilisé |
+|---|---|---|---|
+| R1 | Afficher une fiche produit | `findOne` par `slug` | index `slug` ; fiche complète en **1 lecture** (embedded) |
+| R2 | Lister une catégorie, page 2, triée par prix | `find` + `sort` + `skip` / `limit` | index `categorie.chemin + prix` |
+| R3 | Filtres techniques (CPU 8 cœurs Zen 4, clavier sans fil RGB) | `$all` + `$elemMatch` sur `specs` | **Attribute pattern** : un seul index pour toutes les catégories |
+| R4 | Barre de recherche | `$text` + tri par pertinence | index texte |
+| R5 | Filtre marque + budget | `find` sur `marque.nom` et `prix` | index `marque.nom + prix` ; **extended reference** |
+| R6 | Ajouter un attribut / une catégorie | `updateOne` / `insertOne` | **schéma flexible** : aucune migration |
+| R7 | Publier un avis | `insertOne` + `updateOne` (`$inc`, `$push` + `$slice`) | **Subset** + **Computed** pattern |
+| R8 | Page « tous les avis » | `find` paginé sur `avis` | index `produit_id + date` ; **references** |
+| R9 | Statistiques par catégorie | `aggregate` (`$group`) | — |
+| R10 | Marques les mieux notées | `aggregate` sur `stats_avis` | **Computed pattern** (pas de recalcul sur `avis`) |
+| R11 | Fiche + marque détaillée + 3 derniers avis complets | `aggregate` + `$lookup` | jointure ponctuelle, hors chemin critique |
