@@ -10,8 +10,13 @@ services:
   redis:
     image: redis:7
     container_name: ldlc-redis
+    command: ["redis-server",
+              "--appendonly", "yes", "--appendfsync", "everysec",
+              "--maxmemory", "256mb", "--maxmemory-policy", "volatile-lru"]
     ports:
       - "6379:6379"
+    volumes:
+      - redis-data:/data
 
   cassandra:
     image: cassandra:4.1
@@ -37,5 +42,6 @@ services:
 
 volumes:
   mongo-data:
+  redis-data:
   cassandra-data:
   neo4j-data:
