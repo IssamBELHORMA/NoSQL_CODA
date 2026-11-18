@@ -42,3 +42,20 @@ python lot3-logs-cassandra/generer_logs.py
 sur les SKU réels du catalogue MongoDB. La popularité suit une loi de puissance : quelques
 produits concentrent beaucoup de vues. Les écritures sont envoyées en parallèle
 (`execute_concurrent_with_args`) avec des requêtes préparées.
+
+## 4. Commandes (`commandes.py`)
+
+```bash
+python lot3-logs-cassandra/commandes.py
+```
+
+`enregistrer_commande(user_id, lignes)` reçoit le contenu du panier Redis (`{sku: quantité}`),
+lit les prix dans MongoDB, calcule le total et écrit la commande dans `commandes_par_client`.
+Le script génère 3 000 commandes de test (configurations PC AM5) sur les 12 derniers mois.
+
+| Choix | Justification |
+|---|---|
+| Partition par **client** | L'historique d'un client est lu en une seule partition, déjà trié par date |
+| `lignes` en **map** `sku -> quantité` | La commande est lue en entier, jamais modifiée : pas besoin d'une table séparée |
+| Prix **figés** dans le total | Le prix payé ne doit pas changer si le catalogue change ensuite |
+| Écriture en **LOCAL_QUORUM** | Une commande ne doit pas être perdue : on attend la majorité des réplicas (les logs restent en `ONE`) |
