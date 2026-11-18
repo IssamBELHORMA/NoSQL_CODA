@@ -19,3 +19,18 @@ les lectures passent par le nœud primaire. Pour un catalogue, afficher un prix 
 plus grave qu'une courte indisponibilité en écriture. Les lectures peuvent être déportées
 sur les secondaires (`readPreference: secondaryPreferred`) pour absorber les pics de
 trafic (sorties de composants), en acceptant un léger retard de réplication.
+
+## 2. Collections et validation
+
+| Collection | Volume | Rôle |
+|---|---|---|
+| `produits` | plusieurs dizaines de milliers (27 000 chez LDLC) | Fiches produits, document principal lu par le site |
+| `marques` | plusieurs centaines (600 chez LDLC) | Référentiel des marques, extrait automatiquement des fiches |
+| `avis` | plusieurs centaines de milliers | Historique complet des avis clients |
+| `raw_<categorie>` | 1 par fichier source | Données brutes importées, avant transformation |
+
+**Validation souple :** la collection `produits` utilise un validateur `$jsonSchema` qui impose
+les **champs communs** à toutes les fiches (`sku`, `nom`, `prix`, `stock`, `categorie`) avec
+leur type, mais **autorise tous les champs supplémentaires**. On garde la flexibilité du
+modèle document (un processeur et un clavier n'ont pas les mêmes attributs), sans accepter
+de fiches incomplètes ou mal typées (un prix négatif ou en texte, par exemple).
