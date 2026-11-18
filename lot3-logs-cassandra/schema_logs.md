@@ -31,3 +31,14 @@ python lot3-logs-cassandra/client_cassandra.py
 | **`ts` en `timeuuid`** | Unique et trié par date : deux clics à la même milliseconde ne s'écrasent pas |
 | **Compteurs** (`counter`) | Les vues sont incrémentées à l'écriture : la lecture est immédiate, sans `COUNT(*)` |
 | **TTL de 13 mois** sur le journal brut | Les vieux logs sont supprimés automatiquement ; les compteurs et commandes sont conservés |
+
+## 3. Données de test (`generer_logs.py`)
+
+```bash
+python lot3-logs-cassandra/generer_logs.py
+```
+
+50 000 événements sur les 7 derniers jours (70 % de vues, 20 % de clics, 10 % de recherches),
+sur les SKU réels du catalogue MongoDB. La popularité suit une loi de puissance : quelques
+produits concentrent beaucoup de vues. Les écritures sont envoyées en parallèle
+(`execute_concurrent_with_args`) avec des requêtes préparées.
