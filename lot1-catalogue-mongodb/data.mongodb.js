@@ -202,18 +202,41 @@ db.avis.aggregate([
   { $merge: { into: "produits", on: "_id", whenMatched: "merge", whenNotMatched: "discard" } }
 ]);
 
+// Index (l'index unique sur sku a été créé avant le $merge)
+db.produits.createIndex({ slug: 1 }, { unique: true });
+db.produits.createIndex({ "categorie.chemin": 1, prix: 1 });
+db.produits.createIndex({ "specs.k": 1, "specs.v": 1 });
+db.produits.createIndex({ "marque.nom": 1, prix: 1 });
+db.produits.createIndex({ nom: "text" }, { default_language: "none" });
+db.avis.createIndex({ produit_id: 1, date: -1 });
+
+// Résumé d'un plan d'exécution : étapes utilisées et documents examinés
+const plan = curseur => {
+  const e = curseur.explain("executionStats");
+  return {
+    etapes: JSON.stringify(e.queryPlanner.winningPlan).match(/"stage":"[A-Z_]+"/g),
+    documents_examines: e.executionStats.totalDocsExamined,
+    resultats: e.executionStats.nReturned
+  };
+};
+
 // Vérification
+const unAvis = db.avis.findOne();
+
 ({
   produits: db.produits.countDocuments(),
   marques: db.marques.countDocuments(),
   avis: db.avis.countDocuments(),
-  produits_avec_avis: db.produits.countDocuments({ "stats_avis.nb": { $gt: 0 } }),
-  repartition_notes: db.avis.aggregate([
-    { $group: { _id: "$note", nb: { $sum: 1 } } },
-    { $sort: { _id: -1 } }
-  ]).toArray(),
-  exemple: db.produits.findOne(
-    { "stats_avis.nb": { $gte: 6 } },
-    { _id: 0, nom: 1, stats_avis: 1, avis_recents: 1 }
-  )
+  index_produits: db.produits.getIndexes().map(i => i.name),
+  index_avis: db.avis.getIndexes().map(i => i.name),
+  plans: {
+    categorie_triee_par_prix: plan(
+      db.produits.find({ "categorie.chemin": "Processeurs" }).sort({ prix: 1 }).limit(20)),
+    filtre_spec: plan(
+      db.produits.find({ specs: { $elemMatch: { k: "microarchitecture", v: "Zen 4" } } })),
+    recherche_texte: plan(
+      db.produits.find({ $text: { $search: "ryzen" } })),
+    avis_produit: plan(
+      db.avis.find({ produit_id: unAvis.produit_id }).sort({ date: -1 }))
+  }
 });

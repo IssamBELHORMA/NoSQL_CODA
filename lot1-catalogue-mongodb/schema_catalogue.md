@@ -177,3 +177,35 @@ Les avis posent un dilemme **Embedded vs References** :
 **Données de test :** le dataset source ne contient pas d'avis. Ils sont **générés**
 aléatoirement (pseudos `client_XXXXX`, champ `genere: true`) pour 3 000 produits,
 avec 1 à 15 avis chacun et une répartition des notes réaliste (majorité de 4 et 5).
+
+
+## 6. Index
+
+Le catalogue est **lu beaucoup plus souvent qu'il n'est écrit** : on accepte le coût des index
+à l'écriture (chaque insertion met à jour les index) en échange de lectures rapides.
+Chaque index correspond à une requête du site.
+
+| Collection | Index | Requête servie |
+|---|---|---|
+| `produits` | `{ sku: 1 }` unique | accès direct à une fiche ; clé du `$merge` d'import |
+| `produits` | `{ slug: 1 }` unique | page produit (`/produit/amd-ryzen-7-7800x3d-...`) |
+| `produits` | `{ "categorie.chemin": 1, prix: 1 }` | liste d'une catégorie triée par prix |
+| `produits` | `{ "specs.k": 1, "specs.v": 1 }` | filtres techniques (socket, mémoire, microarchitecture…) |
+| `produits` | `{ "marque.nom": 1, prix: 1 }` | filtre par marque trié par prix |
+| `produits` | texte sur `nom` | barre de recherche |
+| `avis` | `{ produit_id: 1, date: -1 }` | page « tous les avis » d'un produit, plus récents d'abord |
+
+**Points notables :**
+- **Index multikey** : `categorie.chemin` et `specs` sont des tableaux. MongoDB indexe chaque
+  élément : un produit `["Composants", "Processeurs"]` est trouvé en cherchant
+  `"Composants"` **ou** `"Processeurs"`.
+- **Attribute pattern** : grâce aux paires `{ k, v }`, **un seul index** couvre tous les
+  attributs de toutes les catégories. Sans ce pattern, il faudrait un index par attribut
+  (`core_count`, `socket`, `switches`…), soit des dizaines d'index.
+- **Ordre des champs** dans un index composé : le champ filtré par égalité d'abord
+  (`categorie.chemin`), puis le champ de tri (`prix`). L'index sert alors au filtre **et** au tri.
+- **Index texte** en `default_language: "none"` : les noms de produits sont des références
+  techniques en anglais (« Ryzen 7 7800X3D »), qu'il ne faut pas réduire à leur racine.
+
+**Vérification :** `explain("executionStats")` confirme que chaque requête utilise un index
+(`IXSCAN` ou `TEXT_MATCH`) au lieu de parcourir toute la collection (`COLLSCAN`).
