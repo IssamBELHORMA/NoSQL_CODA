@@ -1,1 +1,1 @@
-# NoSQL_CODA
+# NoSQL CODA - LDLC
