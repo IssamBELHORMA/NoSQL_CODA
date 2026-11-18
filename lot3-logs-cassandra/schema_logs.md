@@ -59,3 +59,22 @@ Le script génère 3 000 commandes de test (configurations PC AM5) sur les 12 de
 | `lignes` en **map** `sku -> quantité` | La commande est lue en entier, jamais modifiée : pas besoin d'une table séparée |
 | Prix **figés** dans le total | Le prix payé ne doit pas changer si le catalogue change ensuite |
 | Écriture en **LOCAL_QUORUM** | Une commande ne doit pas être perdue : on attend la majorité des réplicas (les logs restent en `ONE`) |
+
+## 5. Requêtes types (`requetes.py`)
+
+| # | Question métier | Lecture |
+|---|---|---|
+| R1 | Top 10 des produits consultés cette semaine | 7 partitions de `vues_par_jour`, tri en Python |
+| R2 | Vues d'un produit aujourd'hui (et 7 derniers jours) | 1 partition de `vues_par_produit` |
+| R3 | Recherches les plus fréquentes du jour | 10 partitions (buckets) de `evenements_par_jour` |
+| R4 | Historique des commandes d'un client | 1 partition de `commandes_par_client` |
+
+```sql
+-- R2 : vues d'un produit aujourd'hui
+SELECT vues FROM vues_par_produit WHERE sku = 'CPU-F7926AE16E' AND jour = '2026-11-18';
+
+-- R4 : 10 dernières commandes d'un client
+SELECT date_commande, total, lignes FROM commandes_par_client WHERE user_id = 'U1024' LIMIT 10;
+```
+
+Aucune requête n'utilise `ALLOW FILTERING` : chaque requête connaît sa partition key.
