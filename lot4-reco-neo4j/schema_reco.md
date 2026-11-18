@@ -43,3 +43,16 @@ d'unicité (`sku`, `nom`) évitent les doublons et créent les index utilisés p
 une relation `COMPATIBLE_AVEC` entre chaque paire de produits. Avec 223 cartes mères AM5 et 30
 processeurs AM5, il faudrait 6 690 relations ; ici, 253 suffisent, et un nouveau produit n'a
 besoin que d'une relation vers son socket.
+
+## 4. Achats croisés (`achats.py`)
+
+**Nœud :** `Client {id}`
+
+| Relation | Propriété | Origine |
+|---|---|---|
+| `(Client)-[:A_ACHETE]->(Produit)` | `nb` | Commandes Cassandra (Lot 3) |
+| `(Produit)-[:ACHETE_AVEC]-(Produit)` | `nb` = nombre de commandes communes | Calculée par le batch |
+
+Le script relit les commandes dans Cassandra (batch nocturne, voir `docs/architecture.md`) et
+reconstruit ces relations. `ACHETE_AVEC` est un **pré-calcul** : la requête « achetés ensemble »
+lit directement une relation au lieu de parcourir tous les clients.
